@@ -4,8 +4,8 @@ A fully automated Kubernetes cluster setup using Vagrant and libvirt/KVM for CKA
 
 ## Cluster Specifications
 
-- **Control Plane**: 1 node (2 CPU, 2GB RAM) - IP: 192.168.56.10
-- **Workers**: 2 nodes (2 CPU, 2GB RAM each) - IPs: 192.168.56.11-12
+- **Control Plane**: 1 node (2 CPU, 4GB RAM) - IP: 192.168.56.10
+- **Workers**: 2 nodes (2 CPU, 4GB RAM each) - IPs: 192.168.56.11-12
 - **Kubernetes Version**: v1.33.x
 - **Container Runtime**: containerd
 - **CNI Plugin**: Calico
@@ -15,7 +15,7 @@ A fully automated Kubernetes cluster setup using Vagrant and libvirt/KVM for CKA
 ## Prerequisites
 
 - Debian-based host system (Debian/Ubuntu)
-- At least 8GB RAM available (6GB for VMs + 2GB for host)
+- At least 16GB RAM available (12GB for VMs + 4GB for host)
 - Virtualization enabled in BIOS (VT-x/AMD-V)
 - ~20GB free disk space
 
@@ -152,7 +152,7 @@ NUM_WORKER_NODES = 3  # Change from 2 to desired number
 Edit `Vagrantfile` to change CPU/memory:
 
 ```ruby
-v.memory = 4096  # Increase RAM to 4GB
+v.memory = 8192  # Increase RAM to 8GB
 v.cpus = 4       # Increase CPUs to 4
 ```
 
@@ -304,12 +304,12 @@ k8s-vagrant-cluster/
 
 Per VM:
 - 2 vCPUs
-- 2GB RAM
+- 4GB RAM
 - ~10GB disk
 
 Total:
 - 6 vCPUs
-- 6GB RAM
+- 12GB RAM
 - ~30GB disk
 
 ## License

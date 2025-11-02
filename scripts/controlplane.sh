@@ -28,8 +28,14 @@ kubectl --kubeconfig=/home/vagrant/.kube/config apply -f https://raw.githubuserc
 
 # Generate join command for workers
 echo "[4/5] Generating join command for worker nodes..."
-sudo kubeadm token create --print-join-command > /vagrant/join-command.sh
-chmod +x /vagrant/join-command.sh
+# Store join command and serve via HTTP for workers
+sudo kubeadm token create --print-join-command > /tmp/join-command.sh
+chmod 644 /tmp/join-command.sh
+
+# Start simple HTTP server in background to serve join command
+cd /tmp
+nohup python3 -m http.server 8000 >/dev/null 2>&1 &
+echo "Join command available at http://${CONTROL_PLANE_IP}:8000/join-command.sh"
 
 # Wait for nodes to be ready
 echo "[5/5] Waiting for control plane to be ready..."

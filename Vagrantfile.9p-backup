@@ -14,12 +14,17 @@ Vagrant.configure("2") do |config|
   config.vm.box = BOX_NAME
   config.vm.box_version = BOX_VERSION
   config.vm.box_check_update = false
-
-  # Shared folder for join command (using rsync for better compatibility)
-  config.vm.synced_folder ".", "/vagrant",
-    type: "rsync",
-    rsync__auto: false,
-    rsync__exclude: [".git/", "*.log"]
+  
+  # Disable default synced folder (not needed for K8s)
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  
+  # Create shared folder only where needed (for join command)
+  config.vm.synced_folder ".", "/vagrant", 
+    type: "9p",
+    disabled: false,
+    accessmode: "mapped",
+    mount: true,
+    only: ["controlplane", "worker1", "worker2"]
 
   # Global libvirt configuration
   config.vm.provider :libvirt do |v|
@@ -36,15 +41,16 @@ Vagrant.configure("2") do |config|
   end
 
   # Common provisioning for all nodes
-  config.vm.provision "shell",
+  # Use inline script to reduce file I/O overhead
+  config.vm.provision "shell", 
     name: "common-setup",
     inline: <<-SHELL
       #!/bin/bash
       set -euo pipefail
-
+      
       # Export non-interactive frontend
       export DEBIAN_FRONTEND=noninteractive
-
+      
       # Source the common setup script
       bash /vagrant/scripts/common.sh
     SHELL
@@ -52,7 +58,7 @@ Vagrant.configure("2") do |config|
   # Control Plane Node
   config.vm.define "controlplane", primary: true do |cp|
     cp.vm.hostname = "controlplane"
-    cp.vm.network "private_network",
+    cp.vm.network "private_network", 
       ip: CONTROL_PLANE_IP,
       libvirt__network_name: "k8s-network",
       libvirt__dhcp_enabled: false,
@@ -65,9 +71,9 @@ Vagrant.configure("2") do |config|
     end
 
     # Initialize control plane
-    cp.vm.provision "shell",
+    cp.vm.provision "shell", 
       name: "init-controlplane",
-      path: "scripts/controlplane.sh",
+      path: "scripts/controlplane.sh", 
       args: CONTROL_PLANE_IP,
       env: {"DEBIAN_FRONTEND" => "noninteractive"}
   end
@@ -76,7 +82,7 @@ Vagrant.configure("2") do |config|
   (1..NUM_WORKER_NODES).each do |i|
     config.vm.define "worker#{i}" do |worker|
       worker.vm.hostname = "worker#{i}"
-      worker.vm.network "private_network",
+      worker.vm.network "private_network", 
         ip: "#{IP_BASE}#{10+i}",
         libvirt__network_name: "k8s-network",
         libvirt__dhcp_enabled: false,
@@ -89,11 +95,31 @@ Vagrant.configure("2") do |config|
       end
 
       # Join worker to cluster
-      worker.vm.provision "shell",
-        name: "join-worker",
-        path: "scripts/worker.sh",
-        args: CONTROL_PLANE_IP,
-        env: {"DEBIAN_FRONTEND" => "noninteractive"}
+      # Only run after all VMs are up (on last worker)
+      if i == NUM_WORKER_NODES
+        worker.vm.provision "shell",
+          name: "join-all-workers",
+          inline: <<-SHELL
+            #!/bin/bash
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            
+            # Run join script for this worker
+            bash /vagrant/scripts/worker.sh #{CONTROL_PLANE_IP}
+            
+            # Trigger join for other workers (if any)
+            for j in $(seq 1 $((#{i} - 1))); do
+              echo "Triggering join for worker${j}..."
+              vagrant ssh worker${j} -c "sudo bash /vagrant/scripts/worker.sh #{CONTROL_PLANE_IP}" 2>/dev/null || true
+            done
+          SHELL
+      else
+        worker.vm.provision "shell",
+          name: "join-worker",
+          path: "scripts/worker.sh",
+          args: CONTROL_PLANE_IP,
+          env: {"DEBIAN_FRONTEND" => "noninteractive"}
+      end
     end
   end
 end
