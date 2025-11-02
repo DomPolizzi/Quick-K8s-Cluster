@@ -1,0 +1,153 @@
+# Kubernetes Multi-Node Cluster with Vagrant and Hyper-V
+# Optimized for Windows host with Hyper-V
+
+NUM_WORKER_NODES = 2
+IP_BASE = "192.168.56."
+CONTROL_PLANE_IP = "#{IP_BASE}10"
+
+# Box configuration
+BOX_NAME = "generic/ubuntu2204"
+BOX_VERSION = "4.3.12"  # Pin version for consistency
+
+Vagrant.configure("2") do |config|
+  # Global VM configuration
+  config.vm.box = BOX_NAME
+  config.vm.box_version = BOX_VERSION
+  config.vm.box_check_update = false
+
+  # Synced folder for join command (using SMB for Hyper-V)
+  config.vm.synced_folder ".", "/vagrant",
+    type: "smb",
+    smb_username: ENV['VAGRANT_SMB_USERNAME'],
+    smb_password: ENV['VAGRANT_SMB_PASSWORD']
+
+  # Global Hyper-V configuration
+  config.vm.provider "hyperv" do |h|
+    h.linked_clone = true
+    h.enable_virtualization_extensions = false  # Disabled - not needed for Kubernetes
+    h.vm_integration_services = {
+      guest_service_interface: true,
+      heartbeat: true,
+      key_value_pair_exchange: true,
+      shutdown: true,
+      time_synchronization: true,
+      vss: true
+    }
+  end
+
+  # Common provisioning for all nodes
+  config.vm.provision "shell",
+    name: "common-setup",
+    inline: <<-SHELL
+      #!/bin/bash
+      set -euo pipefail
+
+      # Export non-interactive frontend
+      export DEBIAN_FRONTEND=noninteractive
+
+      # Source the common setup script
+      bash /vagrant/scripts/common.sh
+    SHELL
+
+  # Control Plane Node
+  config.vm.define "controlplane", primary: true do |cp|
+    cp.vm.hostname = "controlplane"
+
+    # Hyper-V uses DHCP by default, we'll set static IP in the guest
+    cp.vm.network "private_network", bridge: "Default Switch"
+
+    cp.vm.provider "hyperv" do |h|
+      h.vmname = "k8s-controlplane"
+      h.memory = 4096
+      h.cpus = 2
+      h.maxmemory = 4096
+    end
+
+    # Set static IP and initialize control plane
+    cp.vm.provision "shell",
+      name: "set-static-ip",
+      inline: <<-SHELL
+        #!/bin/bash
+        set -euo pipefail
+
+        # Configure static IP using netplan
+        cat > /etc/netplan/60-static.yaml <<EOF
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      dhcp6: false
+    eth1:
+      addresses:
+        - #{CONTROL_PLANE_IP}/24
+      dhcp4: false
+      dhcp6: false
+EOF
+        chmod 600 /etc/netplan/60-static.yaml
+        netplan apply &
+        sleep 3
+        # Network reconfiguration may cause SSH to briefly disconnect
+        echo "Static IP configured"
+      SHELL
+
+    cp.vm.provision "shell",
+      name: "init-controlplane",
+      path: "scripts/controlplane.sh",
+      args: CONTROL_PLANE_IP,
+      env: {"DEBIAN_FRONTEND" => "noninteractive"}
+  end
+
+  # Worker Nodes
+  (1..NUM_WORKER_NODES).each do |i|
+    config.vm.define "worker#{i}" do |worker|
+      worker.vm.hostname = "worker#{i}"
+
+      worker.vm.network "private_network", bridge: "Default Switch"
+
+      worker.vm.provider "hyperv" do |h|
+        h.vmname = "k8s-worker#{i}"
+        h.memory = 4096
+        h.cpus = 2
+        h.maxmemory = 4096
+      end
+
+      worker_ip = "#{IP_BASE}#{10+i}"
+
+      # Set static IP
+      worker.vm.provision "shell",
+        name: "set-static-ip",
+        inline: <<-SHELL
+          #!/bin/bash
+          set -euo pipefail
+
+          # Configure static IP using netplan
+          cat > /etc/netplan/60-static.yaml <<EOF
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      dhcp6: false
+    eth1:
+      addresses:
+        - #{worker_ip}/24
+      dhcp4: false
+      dhcp6: false
+EOF
+          chmod 600 /etc/netplan/60-static.yaml
+          netplan apply &
+          sleep 3
+          # Network reconfiguration may cause SSH to briefly disconnect
+          echo "Static IP configured"
+        SHELL
+
+      # Join worker to cluster
+      worker.vm.provision "shell",
+        name: "join-worker",
+        path: "scripts/worker.sh",
+        args: CONTROL_PLANE_IP,
+        env: {"DEBIAN_FRONTEND" => "noninteractive"}
+    end
+  end
+end
