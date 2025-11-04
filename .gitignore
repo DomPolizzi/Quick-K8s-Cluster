@@ -1,2 +1,27 @@
-.vagrant
+# Vagrant
+.vagrant/
+*.box
 
+# Kubernetes join command (contains tokens)
+join-command.sh
+**/join-command.sh
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+*.backup
+*.old
+.claude/
